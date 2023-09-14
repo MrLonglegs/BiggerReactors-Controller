@@ -10,7 +10,7 @@ local targetBufferMin = 30
 local targetBufferMax = 70
 
 --Turbine
-local foundTurbines
+local foundTurbines = 0
 local targetRPM = 1820
 local maxRPM = 2200
 local engageThreshhold = 1700
