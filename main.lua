@@ -1,23 +1,26 @@
 --Initialize Reactor and Turbine lists
-local reactors = {}
-local turbines = {}
+reactors = {}
+turbines = {}
 
 --Initialize default config values
 
 --Reactor
 local foundReactors = 0
-local targetBufferMin = 30
-local targetBufferMax = 70
+local reactorTargetBufferMin = 30
+local reactorTargetBufferMax = 70
 
 --Turbine
 local foundTurbines = 0
 local targetRPM = 1820
 local maxRPM = 2200
-local engageThreshhold = 1700
-local disengageThreshhold = 1200
+local turbineTargetBufferMin = 70
+local turbineTargetBufferMax = 99
+local maxFlowRate = 13000
+
 
 --Program
-local loopTime = 1 --Time for each loop of main
+local loopTime = 0.5 --Time for each loop of main
+local running = true --Variable to determine whether the control program should run
 
 --Turns all reactors off. Duh...
 function AllReactorsOff()
@@ -51,13 +54,13 @@ end
 function InitializeReactorValues()
     for _, reactor in pairs(reactors) do
         if reactor.coolantTank() == nil and reactor.battery() ~= nil then
-            reactor.maxBuffer = targetBufferMax / 100 * reactor.battery().capacity()
-            reactor.minBuffer = targetBufferMin / 100 * reactor.battery().capacity()
+            reactor.maxBuffer = reactorTargetBufferMax / 100 * reactor.battery().capacity()
+            reactor.minBuffer = reactorTargetBufferMin / 100 * reactor.battery().capacity()
             reactor.storedThisTick = reactor.battery().stored()
             reactor.reactorType = "passive"
         else if reactor.coolantTank() ~= nil and reactor.battery() == nil then
-            reactor.maxBuffer = targetBufferMax / 100 * reactor.coolantTank().capacity()
-            reactor.minBuffer = targetBufferMin / 100 * reactor.coolantTank().capacity()
+            reactor.maxBuffer = reactorTargetBufferMax / 100 * reactor.coolantTank().capacity()
+            reactor.minBuffer = reactorTargetBufferMin / 100 * reactor.coolantTank().capacity()
             reactor.storedThisTick = reactor.coolantTank().hotFluidAmount()
             reactor.reactorType = "active"
         end
@@ -68,8 +71,8 @@ end
 --Initialize static turbine values, which may vary from turbine to turbine.
 function InitializeTurbineValues()
     for _, turbine in pairs(turbines) do
-        turbine.maxBuffer = targetBufferMax / 100 * turbine.battery().capacity()
-        turbine.minBuffer = targetBufferMin / 100 * turbine.battery().capacity()
+        turbine.maxBuffer = turbineTargetBufferMax / 100 * turbine.battery().capacity()
+        turbine.minBuffer = turbineTargetBufferMin / 100 * turbine.battery().capacity()
         turbine.storedThisTick = turbine.battery().stored()
     end
 end
@@ -86,7 +89,7 @@ function AdjustControlRods()
     for _, reactor in pairs(reactors) do
 
         local currentBuffer = reactor.storedThisTick
-        local diffb = targetBufferMax - targetBufferMin
+        local diffb = reactorTargetBufferMax - reactorTargetBufferMin
         reactor.diffRF = diffb / 100 * reactor.capacity
         local diffr = diffb / 100
         local targetBufferT = reactor.bufferLost
@@ -114,21 +117,25 @@ function AdjustControlRods()
     end
 end
 
---Adjust the flowrate according to need.
+--Adjust the flowrate to achieve set RPM
 function AdjustFlowRate()
     for _, turbine in pairs(turbines) do
-        for _, turbine in pairs(turbines) do
-            if turbine.RPM < targetRPM then
-                turbine.fluidTank().setNominalFlowRate(turbine.flowRate + turbine.flowRateStep)
-            end
-            if turbine.RPM > targetRPM then
-                turbine.fluidTank().setNominalFlowRate(turbine.flowRate - (turbine.flowRateStep * -1))
-            end
+        if turbine.RPM < targetRPM and turbine.flowRate < maxFlowRate then
+            turbine.fluidTank().setNominalFlowRate(turbine.flowRate + turbine.flowRateStep)
+        end
+        if turbine.RPM > targetRPM then
+            turbine.fluidTank().setNominalFlowRate(turbine.flowRate - (turbine.flowRateStep * -1))
+        end
+        if turbine.storedThisTick < turbine.minBuffer then
+            turbine.setCoilEngaged(true)
+        end
+        if turbine.storedThisTick > turbine.maxBuffer then
+            turbine.setCoilEngaged(false)
         end
     end
 end
 
---Update the stats of the reactors and turbines for further use in the script.
+--Update the Stats of the reactors and turbines for further use in the script.
 function UpdateStats()
     for _, reactor in pairs(reactors) do
         reactor.storedLastTick = reactor.storedThisTick
@@ -159,20 +166,42 @@ function UpdateStats()
     end
 end
 
---Initialize the values of the reactors and turbines.
+--Get CurrentTotalEnergy for further use
+function GetCurrentTotalEnergy()
+    local currentEnergy = 0
+    for _, reactor in pairs(reactors) do
+        if reactor.reactorType == "passive" then
+            currentEnergy = currentEnergy + reactor.storedThisTick
+        end
+    end
+
+    for _, turbine in pairs(turbines) do
+        currentEnergy = currentEnergy + turbine.storedThisTick
+    end
+
+    return currentEnergy
+end
+
+-- !! Here starts the main program !!
+
+--Wrap all Monitors, Reactors and Turbines available
+reactors = { peripheral.find("BiggerReactors_Reactor") }
+turbines = { peripheral.find("BiggerReactors_Turbine") }
+
+
+--Initizialize machine values
 InitializeReactorValues()
 InitializeTurbineValues()
 
---Start all Reactors and turbines.
+--Start all Reactors
 AllReactorsOn()
 AllTurbinesOn()
 
---Loop to keep the program running.
-while true do
+--Main working loop
+while running do
     UpdateStats()
     AdjustFlowRate()
     AdjustControlRods()
 
-    local timer = os.startTimer(loopTime)
-    os.pullEvent()
+    os.sleep(loopTime)
 end
